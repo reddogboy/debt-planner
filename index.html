@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debt Destroyer - คำนวณแผนปลดหนี้</title>
+    <!-- โหลด React, ReactDOM, Babel และ Tailwind CSS -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f3f4f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        /* ซ่อนลูกศรในช่อง input type="number" */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- ฟังก์ชันช่วยเหลือ (Formatters) ---
+        const formatMoney = (amount) => "฿" + Math.round(amount).toLocaleString("th-TH");
+        const formatMonths = (months) => {
+            if (months >= 600) return "ไม่มีวันหมด (หนี้พอกหางหมู)";
+            const y = Math.floor(months / 12);
+            const m = months % 12;
+            if (y === 0) return `${m} เดือน`;
+            if (m === 0) return `${y} ปี`;
+            return `${y} ปี ${m} เดือน`;
+        };
+
+        // --- Core Engine: อัลกอริทึมจำลองการจ่ายหนี้ ---
+        // strategy: 'minimum', 'snowball' (น้อยไปมาก), 'avalanche' (ดอกแพงไปถูก)
+        const simulatePayoff = (debts, extraPayment, strategy) => {
+            if (debts.length === 0) return { months: 0, totalInterest: 0, isInfinite: false };
+
+            // Clone data เพื่อไม่ให้กระทบ State หลัก
+            let currentDebts = debts.map(d => ({ ...d }));
+            
+            // เรียงลำดับคิวการโปะหนี้
+            if (strategy === 'snowball') {
+                currentDebts.sort((a, b) => a.balance - b.balance);
+            } else if (strategy === 'avalanche') {
+                currentDebts.sort((a, b) => b.rate - a.rate);
+            } // ถ้า 'minimum' ลำดับไม่สำคัญเพราะไม่ได้โปะ
+
+            let totalMonths = 0;
+            let totalInterestPaid = 0;
+            let isInfinite = false;
+
+            // ลูปจำลองรายเดือน (Safety Break ที่ 600 เดือน หรือ 50 ปี)
+            while (currentDebts.length > 0 && totalMonths < 600) {
+                totalMonths++;
+                let monthlyExtraBudget = strategy === 'minimum' ? 0 : extraPayment;
+
+                // Step 1: คิดดอกเบี้ยและจ่ายขั้นต่ำของทุกก้อนก่อน
+                for (let i = 0; i < currentDebts.length; i++) {
+                    let debt = currentDebts[i];
+                    // ดอกเบี้ยต่อเดือน = เงินต้น * (ดอกเบี้ยรายปี / 100) / 12
+                    let interest = debt.balance * (debt.rate / 100) / 12;
+                    totalInterestPaid += interest;
+                    debt.balance += interest; // ทบดอกเบี้ยเข้าเงินต้น
+
+                    // จ่ายขั้นต่ำ
+                    let payment = Math.min(debt.minPayment, debt.balance);
+                    debt.balance -= payment;
+
+                    // ถ้าหนี้ก้อนนี้หมดแล้ว ให้เอาเงินขั้นต่ำที่เคยต้องจ่าย มารวมเป็น "งบโปะพิเศษ (Snowball Effect)"
+                    if (debt.balance <= 0) {
+                        monthlyExtraBudget += (debt.minPayment - payment); // เงินทอนที่เหลือ
+                        monthlyExtraBudget += debt.minPayment; // เดือนหน้าไม่ต้องจ่ายเจ้านี้แล้ว เอามาโปะก้อนอื่น
+                    }
+                }
+
+                // คัดหนี้ที่หมดแล้วออก
+                currentDebts = currentDebts.filter(d => d.balance > 0);
+
+                // Step 2: เอาเงินโปะพิเศษ (Extra + เงินจากหนี้ที่หมดไปแล้ว) ไปอัดก้อนแรกในคิว
+                if (currentDebts.length > 0 && monthlyExtraBudget > 0) {
+                    let targetDebt = currentDebts[0];
+                    let payoff = Math.min(monthlyExtraBudget, targetDebt.balance);
+                    targetDebt.balance -= payoff;
+                    
+                    if (targetDebt.balance <= 0) {
+                         // ถ้าโปะจนหมด คัดออกในรอบถัดไป
+                         currentDebts = currentDebts.filter(d => d.balance > 0);
+                    }
+                }
+            }
+
+            if (totalMonths >= 600) isInfinite = true;
+
+            return { months: totalMonths, totalInterest: totalInterestPaid, isInfinite };
+        };
+
+        function App() {
+            // 1. State Management (ซิงค์กับ LocalStorage)
+            const [debts, setDebts] = useState(() => JSON.parse(localStorage.getItem('dd_debts')) || []);
+            const [extraPay, setExtraPay] = useState(() => Number(localStorage.getItem('dd_extra')) || 0);
+
+            // Form States
+            const [name, setName] = useState("");
+            const [balance, setBalance] = useState("");
+            const [rate, setRate] = useState("");
+            const [minPayment, setMinPayment] = useState("");
+
+            useEffect(() => {
+                localStorage.setItem('dd_debts', JSON.stringify(debts));
+                localStorage.setItem('dd_extra', extraPay);
+            }, [debts, extraPay]);
+
+            // 2. ใช้ useMemo เพื่อคำนวณอัลกอริทึมทั้ง 3 แบบพร้อมกัน (คำนวณใหม่เมื่อหนี้หรือเงินโปะเปลี่ยน)
+            const results = useMemo(() => {
+                return {
+                    minimum: simulatePayoff(debts, 0, 'minimum'),
+                    snowball: simulatePayoff(debts, extraPay, 'snowball'),
+                    avalanche: simulatePayoff(debts, extraPay, 'avalanche')
+                };
+            }, [debts, extraPay]);
+
+            // 3. ฟังก์ชันเพิ่มหนี้
+            const addDebt = (e) => {
+                e.preventDefault();
+                if (!name || !balance || !rate || !minPayment) return;
+                
+                const newDebt = {
+                    id: Date.now(),
+                    name,
+                    balance: parseFloat(balance),
+                    rate: parseFloat(rate),
+                    minPayment: parseFloat(minPayment)
+                };
+                
+                // ตรวจสอบ Safety เบื้องต้น (จ่ายขั้นต่ำน้อยกว่าดอกเบี้ยหรือไม่)
+                const firstMonthInterest = newDebt.balance * (newDebt.rate / 100) / 12;
+                if (newDebt.minPayment <= firstMonthInterest) {
+                    alert(`⚠️ คำเตือน: ยอดจ่ายขั้นต่ำของคุณ (฿${newDebt.minPayment}) น้อยกว่าหรือเท่ากับดอกเบี้ยต่อเดือน (฿${Math.round(firstMonthInterest)}) หนี้ก้อนนี้จะไม่มีวันลดลงเลยครับ! แนะนำให้เพิ่มยอดขั้นต่ำขึ้นอีก`);
+                }
+
+                setDebts([...debts, newDebt]);
+                // เคลียร์ฟอร์ม
+                setName(""); setBalance(""); setRate(""); setMinPayment("");
+            };
+
+            const removeDebt = (id) => {
+                setDebts(debts.filter(d => d.id !== id));
+            };
+
+            const totalDebtBalance = debts.reduce((sum, d) => sum + d.balance, 0);
+
+            return (
+                <div className="max-w-4xl mx-auto p-4 md:p-8 flex flex-col md:flex-row gap-8">
+                    
+                    {/* ฝั่งซ้าย: Data Entry (กรอกข้อมูล) */}
+                    <div className="w-full md:w-5/12 space-y-6">
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                            <h1 className="text-2xl font-black text-gray-800 mb-1 flex items-center">
+                                💥 Debt Destroyer
+                            </h1>
+                            <p className="text-xs text-gray-500 mb-6 flex items-center">
+                                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded mr-2 font-bold">100% Private</span>
+                                ข้อมูลคำนวณบนเครื่องคุณเท่านั้น ไม่มีการส่งออกไปที่อื่น
+                            </p>
+
+                            <form onSubmit={addDebt} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">ชื่อรายการหนี้ (เช่น บัตร KTC, ผ่อนรถ)</label>
+                                    <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="ระบุชื่อหนี้" required />
+                                </div>
+                                <div className="flex gap-4">
+                                    <div className="w-1/2">
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">ยอดคงเหลือ (฿)</label>
+                                        <input type="number" value={balance} onChange={e => setBalance(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="เช่น 50000" required min="1" />
+                                    </div>
+                                    <div className="w-1/2">
+                                        <label className="block text-sm font-bold text-gray-700 mb-1">ดอกเบี้ยต่อปี (%)</label>
+                                        <input type="number" step="0.01" value={rate} onChange={e => setRate(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="เช่น 16" required min="0" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">ยอดผ่อนที่ต้องจ่ายทุกเดือน (฿)</label>
+                                    <input type="number" value={minPayment} onChange={e => setMinPayment(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" placeholder="ขั้นต่ำหรือยอดปกติที่จ่ายอยู่" required min="1" />
+                                </div>
+                                <button type="submit" className="w-full bg-gray-900 text-white font-bold py-3 rounded-xl hover:bg-gray-800 transition">
+                                    + เพิ่มรายการหนี้
+                                </button>
+                            </form>
+                        </div>
+
+                        {/* รายการหนี้ที่มี */}
+                        {debts.length > 0 && (
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                                <h2 className="text-lg font-bold text-gray-800 mb-4">หนี้ของคุณ ({debts.length} รายการ)</h2>
+                                <div className="space-y-3">
+                                    {debts.map(d => (
+                                        <div key={d.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-200">
+                                            <div>
+                                                <p className="font-bold text-sm text-gray-800">{d.name}</p>
+                                                <p className="text-xs text-gray-500">{formatMoney(d.balance)} @ {d.rate}% (จ่าย {formatMoney(d.minPayment)}/ด)</p>
+                                            </div>
+                                            <button onClick={() => removeDebt(d.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg text-xs font-bold">ลบ</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ฝั่งขวา: Reality Check & Dashboard */}
+                    <div className="w-full md:w-7/12 space-y-6">
+                        
+                        {/* งบโปะพิเศษ */}
+                        <div className="bg-blue-600 p-6 rounded-2xl shadow-lg text-white">
+                            <h2 className="text-lg font-bold mb-2 text-blue-100">กระสุนพิเศษสำหรับโปะหนี้ต่อเดือน</h2>
+                            <p className="text-sm text-blue-200 mb-4">ถ้าคุณมีเงินเหลือแต่ละเดือน "นอกเหนือจาก" ที่ต้องจ่ายขั้นต่ำปกติ คุณสามารถจ่ายเพิ่มได้เดือนละเท่าไหร่?</p>
+                            <div className="flex items-center">
+                                <span className="text-2xl font-bold mr-3">฿</span>
+                                <input 
+                                    type="number" 
+                                    value={extraPay || ''} 
+                                    onChange={e => setExtraPay(Number(e.target.value))} 
+                                    className="w-full p-3 bg-blue-700 border-none rounded-xl text-2xl font-black focus:ring-2 focus:ring-white outline-none placeholder-blue-400" 
+                                    placeholder="เช่น 1000, 5000"
+                                />
+                            </div>
+                        </div>
+
+                        {/* เปรียบเทียบแผน */}
+                        {debts.length > 0 ? (
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-6">
+                                <div className="flex justify-between items-end border-b pb-4">
+                                    <div>
+                                        <h2 className="text-xl font-bold text-gray-800">เปรียบเทียบแผนปลดหนี้</h2>
+                                        <p className="text-sm text-gray-500">ยอดหนี้รวมปัจจุบัน: <span className="font-bold text-red-500">{formatMoney(totalDebtBalance)}</span></p>
+                                    </div>
+                                </div>
+
+                                {/* กรณีที่ 1: จ่ายขั้นต่ำ */}
+                                <div className="p-4 rounded-xl border-2 border-red-100 bg-red-50 relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">ถ้าไม่ทำอะไรเลย</div>
+                                    <h3 className="font-bold text-red-800 mb-2">😭 จ่ายขั้นต่ำไปเรื่อยๆ (ไม่มีเงินโปะ)</h3>
+                                    {results.minimum.isInfinite ? (
+                                        <p className="text-sm text-red-600 font-bold">🚨 อันตราย! ดอกเบี้ยวิ่งเร็วกว่าเงินที่คุณจ่าย หนี้ก้อนนี้ไม่มีวันหมด</p>
+                                    ) : (
+                                        <div className="flex justify-between mt-2">
+                                            <div>
+                                                <p className="text-xs text-red-500">เวลาจนกว่าจะหมดหนี้</p>
+                                                <p className="font-black text-lg text-red-700">{formatMonths(results.minimum.months)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-xs text-red-500">เสียดอกเบี้ยทิ้งรวม</p>
+                                                <p className="font-black text-lg text-red-700">{formatMoney(results.minimum.totalInterest)}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* กรณีที่ 2: Snowball */}
+                                <div className="p-4 rounded-xl border-2 border-orange-100 bg-orange-50">
+                                    <h3 className="font-bold text-orange-800 mb-2">⛄ แผน Snowball (โปะก้อนเล็กสุดก่อน)</h3>
+                                    <p className="text-xs text-orange-600 mb-3">ได้กำลังใจเร็ว เพราะเห็นหนี้หายไปทีละก้อน</p>
+                                    <div className="flex justify-between border-t border-orange-200 pt-3">
+                                        <div>
+                                            <p className="text-xs text-orange-600">เวลาปลดหนี้</p>
+                                            <p className="font-black text-lg text-orange-800">{formatMonths(results.snowball.months)}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-orange-600">ดอกเบี้ยรวม</p>
+                                            <p className="font-black text-lg text-orange-800">{formatMoney(results.snowball.totalInterest)}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* กรณีที่ 3: Avalanche */}
+                                <div className="p-4 rounded-xl border-2 border-green-200 bg-green-50 relative overflow-hidden shadow-[0_4px_15px_rgba(34,197,94,0.2)] transform scale-[1.02]">
+                                    <div className="absolute top-0 right-0 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">ประหยัดที่สุด 🏆</div>
+                                    <h3 className="font-bold text-green-800 mb-2">🏔️ แผน Avalanche (โปะดอกแพงสุดก่อน)</h3>
+                                    <p className="text-xs text-green-600 mb-3">เจ็บแต่จบ ประหยัดดอกเบี้ยได้สูงสุดในทางคณิตศาสตร์</p>
+                                    <div className="flex justify-between border-t border-green-200 pt-3">
+                                        <div>
+                                            <p className="text-xs text-green-700">เวลาปลดหนี้</p>
+                                            <p className="font-black text-2xl text-green-800">{formatMonths(results.avalanche.months)}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-green-700">ดอกเบี้ยรวม</p>
+                                            <p className="font-black text-2xl text-green-800">{formatMoney(results.avalanche.totalInterest)}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* บทสรุป Reality Check */}
+                                {extraPay > 0 && !results.minimum.isInfinite && (
+                                    <div className="text-center p-4 bg-gray-900 text-white rounded-xl">
+                                        <p className="text-sm">การอดทนโปะเพิ่มเดือนละ {formatMoney(extraPay)}</p>
+                                        <p className="font-bold text-yellow-400 mt-1">
+                                            ช่วยให้คุณเป็นไทเร็วขึ้น {formatMonths(results.minimum.months - results.avalanche.months)} <br/>
+                                            และประหยัดดอกเบี้ยไปได้ถึง {formatMoney(results.minimum.totalInterest - results.avalanche.totalInterest)}!
+                                        </p>
+                                    </div>
+                                )}
+
+                            </div>
+                        ) : (
+                            <div className="bg-white p-10 rounded-2xl shadow-sm border border-gray-100 text-center border-dashed border-2">
+                                <div className="text-4xl mb-4">📝</div>
+                                <h3 className="text-lg font-bold text-gray-700 mb-2">รอวิเคราะห์ข้อมูล</h3>
+                                <p className="text-sm text-gray-500">กรอกรายการหนี้ทางฝั่งซ้าย เพื่อดูแผนการปลดหนี้ที่ดีที่สุดสำหรับคุณ</p>
+                            </div>
+                        )}
+                    </div>
+
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
