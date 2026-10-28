@@ -8,7 +8,7 @@
     <!-- 1. โหลด Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- 2. โหลด React & ReactDOM (ล็อคเวอร์ชัน 18.2.0 เสถียรที่สุด) -->
+    <!-- 2. โหลด React & ReactDOM -->
     <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
 
@@ -38,10 +38,12 @@
         const { useState, useEffect, useMemo } = React;
         const { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend, ReferenceLine } = Recharts;
 
+        // --- Icons ---
         const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
         const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
         const AlertIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
 
+        // --- Formatters ---
         const formatMoney = (amount) => "฿" + Math.round(amount).toLocaleString("th-TH");
         
         const getAbsoluteDate = (monthsAdded) => {
@@ -52,7 +54,7 @@
         };
         
         const formatMonthsDuration = (months) => {
-            if (months >= 600) return "ไม่มีวันหมด";
+            if (months >= 600) return "จ่ายจนเกษียณ";
             const y = Math.floor(months / 12);
             const m = months % 12;
             if (y === 0) return `${m} เดือน`;
@@ -60,13 +62,45 @@
             return `${y} ปี ${m} เดือน`;
         };
 
-        // --- Core Engine: รองรับทั้ง Minimum, Snowball, และ Avalanche ---
+        // --- Custom Tooltip สำหรับ Recharts (แก้ปัญหาบังจอมือถือ) ---
+        const CustomTooltip = ({ active, payload, label, isHidden, setIsHidden }) => {
+            if (active && payload && payload.length && !isHidden) {
+                return (
+                    <div className="bg-white/95 backdrop-blur-md p-3.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-slate-200 pointer-events-auto min-w-[170px]">
+                        <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
+                            <p className="font-bold text-slate-800 text-xs">เดือนที่ {label}</p>
+                            {/* ปุ่มกากบาท สั่งหยุด Event ไม่ให้ทะลุไปถึงกราฟ */}
+                            <button 
+                                onPointerDown={(e) => { e.stopPropagation(); setIsHidden(true); }} 
+                                className="text-slate-400 hover:text-rose-500 w-6 h-6 flex items-center justify-center rounded-full bg-slate-100 hover:bg-rose-50 transition-colors"
+                                aria-label="Close tooltip"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                        <div className="space-y-2">
+                            {payload.map((entry, index) => (
+                                <div key={index} className="flex items-center justify-between text-[11px]">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: entry.color }}></div>
+                                        <span className="text-slate-600 font-medium">{entry.name}</span>
+                                    </div>
+                                    <span className="font-black text-slate-800 ml-4">{formatMoney(entry.value)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            }
+            return null;
+        };
+
+        // --- Core Engine ---
         const simulatePayoff = (debts, extraPayment, strategy) => {
             if (debts.length === 0) return { months: 0, totalInterest: 0, isInfinite: false, history: [] };
 
             let currentDebts = debts.map(d => ({ ...d }));
             
-            // เรียงลำดับตามกลยุทธ์
             if (strategy === 'snowball') currentDebts.sort((a, b) => a.balance - b.balance);
             else if (strategy === 'avalanche') currentDebts.sort((a, b) => b.rate - a.rate);
 
@@ -122,6 +156,9 @@
 
             const [toast, setToast] = useState(null);
             const [deleteConfirm, setDeleteConfirm] = useState(null);
+            
+            // State สำหรับคุมการซ่อน/แสดง Custom Tooltip
+            const [isTooltipHidden, setIsTooltipHidden] = useState(false);
 
             useEffect(() => {
                 localStorage.setItem('dd_debts', JSON.stringify(debts));
@@ -152,6 +189,15 @@
                 };
             }, [debts, extraPayStr]);
 
+            // คำนวณลำดับการโปะหนี้ (เพื่อแสดงให้ผู้ใช้เห็นความโปร่งใสของกลยุทธ์)
+            const payoffOrders = useMemo(() => {
+                if(debts.length <= 1) return { snowball: [], avalanche: [] };
+                return {
+                    snowball: [...debts].sort((a, b) => a.balance - b.balance).map(d => d.name),
+                    avalanche: [...debts].sort((a, b) => b.rate - a.rate).map(d => d.name)
+                };
+            }, [debts]);
+
             const chartData = useMemo(() => {
                 if (debts.length === 0) return [];
                 const maxLen = Math.max(
@@ -166,8 +212,8 @@
                     data.push({
                         month: i,
                         "จ่ายขั้นต่ำ": results.minimum.history[i] !== undefined ? Math.round(results.minimum.history[i]) : 0,
-                        "Snowball (ก้อนเล็ก)": results.snowball.history[i] !== undefined ? Math.round(results.snowball.history[i]) : 0,
-                        "Avalanche (ดอกแพง)": results.avalanche.history[i] !== undefined ? Math.round(results.avalanche.history[i]) : 0
+                        "Snowball": results.snowball.history[i] !== undefined ? Math.round(results.snowball.history[i]) : 0,
+                        "Avalanche": results.avalanche.history[i] !== undefined ? Math.round(results.avalanche.history[i]) : 0
                     });
                 }
                 return data;
@@ -186,7 +232,7 @@
 
                 const firstMonthInterest = bal * (rt / 100) / 12;
                 if (minP <= firstMonthInterest) {
-                    showToast(`⚠️ ยอดจ่ายขั้นต่ำน้อยกว่าดอกเบี้ย (฿${Math.round(firstMonthInterest)}) หนี้ไม่มีวันลด!`, "error");
+                    showToast(`⚠️ ยอดขั้นต่ำน้อยกว่าดอกเบี้ย (฿${Math.round(firstMonthInterest)}) หนี้ก้อนนี้ไม่มีวันลด!`, "error");
                 }
 
                 if (editingId) {
@@ -211,7 +257,6 @@
             };
 
             const confirmDelete = (id) => setDeleteConfirm(id);
-
             const executeDelete = () => {
                 setDebts(debts.filter(d => d.id !== deleteConfirm));
                 setDeleteConfirm(null);
@@ -236,13 +281,13 @@
 
                     {deleteConfirm && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-                            <div className="bg-white p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 modal-anim text-center">
+                            <div className="bg-white p-6 rounded-3xl shadow-2xl max-w-sm w-full mx-4 modal-anim text-center">
                                 <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">🗑️</div>
-                                <h3 className="text-xl font-bold text-gray-900 mb-2">ลบรายการหนี้นี้?</h3>
-                                <p className="text-sm text-gray-500 mb-6">คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้ ไม่สามารถกู้คืนได้นะ</p>
+                                <h3 className="text-xl font-bold text-slate-800 mb-2">ลบรายการหนี้นี้?</h3>
+                                <p className="text-sm text-slate-500 mb-6">คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้ ไม่สามารถกู้คืนได้นะ</p>
                                 <div className="flex gap-3">
-                                    <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition">ยกเลิก</button>
-                                    <button onClick={executeDelete} className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl transition">ลบทิ้ง</button>
+                                    <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition">ยกเลิก</button>
+                                    <button onClick={executeDelete} className="flex-1 py-3.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl transition">ลบทิ้ง</button>
                                 </div>
                             </div>
                         </div>
@@ -259,31 +304,31 @@
 
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">ชื่อรายการหนี้</label>
-                                    <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition" placeholder="เช่น บัตร KTC, ผ่อนรถ" required />
+                                    <label className="block text-sm font-bold text-slate-700 mb-1.5">ชื่อรายการหนี้</label>
+                                    <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition" placeholder="เช่น บัตร KTC, ผ่อนรถ" required />
                                 </div>
                                 <div className="flex gap-4">
                                     <div className="w-1/2">
-                                        <label className="block text-sm font-bold text-slate-700 mb-1">ยอดคงเหลือ (฿)</label>
-                                        <input type="text" inputMode="numeric" value={balanceStr} onChange={handleNumberInput(setBalanceStr)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="0" required />
+                                        <label className="block text-sm font-bold text-slate-700 mb-1.5">ยอดคงเหลือ (฿)</label>
+                                        <input type="text" inputMode="numeric" value={balanceStr} onChange={handleNumberInput(setBalanceStr)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="0" required />
                                     </div>
                                     <div className="w-1/2">
-                                        <label className="block text-sm font-bold text-slate-700 mb-1">ดอกเบี้ยต่อปี (%)</label>
-                                        <input type="text" inputMode="decimal" value={rateStr} onChange={handleNumberInput(setRateStr)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="16.0" required />
+                                        <label className="block text-sm font-bold text-slate-700 mb-1.5">ดอกเบี้ยต่อปี (%)</label>
+                                        <input type="text" inputMode="decimal" value={rateStr} onChange={handleNumberInput(setRateStr)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="16.0" required />
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">ยอดจ่ายขั้นต่ำต่อเดือน (฿)</label>
-                                    <input type="text" inputMode="numeric" value={minPaymentStr} onChange={handleNumberInput(setMinPaymentStr)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="0" required />
+                                    <label className="block text-sm font-bold text-slate-700 mb-1.5">ยอดจ่ายขั้นต่ำต่อเดือน (฿)</label>
+                                    <input type="text" inputMode="numeric" value={minPaymentStr} onChange={handleNumberInput(setMinPaymentStr)} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition font-semibold" placeholder="0" required />
                                 </div>
                                 
                                 {editingId ? (
                                     <div className="flex gap-3 pt-2">
-                                        <button type="button" onClick={() => { setEditingId(null); setName(""); setBalanceStr(""); setRateStr(""); setMinPaymentStr(""); }} className="w-1/3 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition">ยกเลิก</button>
-                                        <button type="submit" className="w-2/3 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200">💾 บันทึกการแก้ไข</button>
+                                        <button type="button" onClick={() => { setEditingId(null); setName(""); setBalanceStr(""); setRateStr(""); setMinPaymentStr(""); }} className="w-1/3 py-3.5 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition">ยกเลิก</button>
+                                        <button type="submit" className="w-2/3 py-3.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200">💾 บันทึกแก้ไข</button>
                                     </div>
                                 ) : (
-                                    <button type="submit" className="w-full mt-2 bg-slate-900 text-white font-bold py-3.5 rounded-xl hover:bg-slate-800 transition shadow-lg shadow-slate-200">
+                                    <button type="submit" className="w-full mt-2 bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 transition shadow-lg shadow-slate-200">
                                         + เพิ่มรายการหนี้
                                     </button>
                                 )}
@@ -301,11 +346,11 @@
                                         <div key={d.id} className={`flex justify-between items-center p-4 rounded-2xl border transition-all ${editingId === d.id ? 'bg-blue-50 border-blue-200 shadow-inner' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}>
                                             <div>
                                                 <p className="font-bold text-slate-800">{d.name}</p>
-                                                <p className="text-xs text-slate-500 mt-0.5">{formatMoney(d.balance)} • ดอก {d.rate}% • ผ่อน {formatMoney(d.minPayment)}/ด</p>
+                                                <p className="text-[11px] text-slate-500 mt-0.5 font-medium">{formatMoney(d.balance)} • ดอก {d.rate}% • ผ่อน {formatMoney(d.minPayment)}</p>
                                             </div>
-                                            <div className="flex gap-2">
-                                                <button onClick={() => startEdit(d)} className="p-2 text-blue-500 hover:bg-blue-100 rounded-lg transition" title="แก้ไข"><EditIcon /></button>
-                                                <button onClick={() => confirmDelete(d.id)} className="p-2 text-rose-500 hover:bg-rose-100 rounded-lg transition" title="ลบ"><TrashIcon /></button>
+                                            <div className="flex gap-1">
+                                                <button onClick={() => startEdit(d)} className="p-2.5 text-blue-500 hover:bg-blue-100 rounded-xl transition" title="แก้ไข"><EditIcon /></button>
+                                                <button onClick={() => confirmDelete(d.id)} className="p-2.5 text-rose-500 hover:bg-rose-100 rounded-xl transition" title="ลบ"><TrashIcon /></button>
                                             </div>
                                         </div>
                                     ))}
@@ -318,16 +363,16 @@
                     <div className="w-full lg:w-7/12 space-y-6">
                         
                         <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-3xl shadow-xl shadow-blue-900/20 text-white relative overflow-hidden">
-                            <h2 className="text-lg font-bold mb-1 text-blue-50">🔥 เงินพิเศษสำหรับโปะหนี้ (ต่อเดือน)</h2>
-                            <p className="text-xs text-blue-200 mb-4">จ่ายเพิ่มจากขั้นต่ำปกติ เพื่อทำลายวงจรดอกเบี้ยนรก</p>
-                            <div className="flex items-center bg-blue-800/50 p-2 rounded-2xl border border-blue-500/30 backdrop-blur-md">
+                            <h2 className="text-lg font-bold mb-1 text-blue-50">🔥 เงินโปะพิเศษ (ต่อเดือน)</h2>
+                            <p className="text-xs text-blue-200 mb-4 font-medium">จ่ายเพิ่มจากขั้นต่ำปกติ เพื่อทำลายวงจรดอกเบี้ยนรก</p>
+                            <div className="flex items-center bg-blue-800/40 p-1.5 rounded-2xl border border-blue-400/30 backdrop-blur-md">
                                 <span className="text-2xl font-bold ml-4 mr-2 text-blue-200">฿</span>
                                 <input 
                                     type="text" 
                                     inputMode="numeric"
                                     value={extraPayStr} 
                                     onChange={handleNumberInput(setExtraPayStr)} 
-                                    className="w-full p-2 bg-transparent border-none text-3xl font-black text-white focus:ring-0 outline-none placeholder-blue-400" 
+                                    className="w-full p-2.5 bg-transparent border-none text-3xl font-black text-white focus:ring-0 outline-none placeholder-blue-400/50" 
                                     placeholder="เช่น 1,000"
                                 />
                             </div>
@@ -343,43 +388,76 @@
                                     <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
                                         <div>
                                             <h3 className="font-bold text-slate-700 mb-1 text-sm">😭 จ่ายขั้นต่ำ</h3>
-                                            <p className="text-[11px] text-slate-500 mb-3">ไม่โปะเพิ่มเลย</p>
+                                            <p className="text-[10px] text-slate-500 mb-3 font-medium">ไม่โปะเพิ่มเลยสักบาท</p>
                                         </div>
                                         {results.minimum.isInfinite ? (
-                                            <div className="bg-rose-100 text-rose-700 p-2 rounded-xl text-xs font-bold">หนี้ไม่มีวันหมด!</div>
+                                            <div className="bg-rose-100 text-rose-700 p-2.5 rounded-xl text-xs font-bold text-center">หนี้ไม่มีวันหมด!</div>
                                         ) : (
                                             <div>
-                                                <p className="text-[10px] uppercase font-bold text-slate-400">หมดหนี้ใน</p>
+                                                <p className="text-[10px] uppercase font-bold text-slate-400 mb-0.5">หมดหนี้ในเดือน</p>
                                                 <p className="font-black text-sm text-slate-800">{getAbsoluteDate(results.minimum.months)}</p>
-                                                <p className="text-[10px] text-rose-500 font-bold mt-1">ดอกเบี้ย: {formatMoney(results.minimum.totalInterest)}</p>
+                                                <p className="text-[10px] font-semibold text-slate-500 mb-2">({formatMonthsDuration(results.minimum.months)})</p>
+                                                <p className="text-[10px] text-rose-500 font-bold bg-rose-50 inline-block px-2 py-1 rounded-md">เสียดอกเบี้ย: {formatMoney(results.minimum.totalInterest)}</p>
                                             </div>
                                         )}
                                     </div>
 
-                                    {/* Snowball (เพิ่มกลับเข้ามาตามคำขอ) */}
+                                    {/* Snowball */}
                                     <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col justify-between">
                                         <div>
                                             <h3 className="font-bold text-amber-800 mb-1 text-sm">⛄ Snowball</h3>
-                                            <p className="text-[11px] text-amber-600 mb-3">โปะก้อนเล็กก่อน (มีกำลังใจ)</p>
+                                            <p className="text-[10px] text-amber-600/80 mb-3 font-medium">เน้นกำลังใจ ปิดก้อนเล็กก่อน</p>
                                         </div>
                                         <div>
-                                            <p className="text-[10px] uppercase font-bold text-amber-600/70">หมดหนี้ใน</p>
-                                            <p className="font-black text-sm text-amber-800">{getAbsoluteDate(results.snowball.months)}</p>
-                                            <p className="text-[10px] text-amber-700 font-bold mt-1">ดอกเบี้ย: {formatMoney(results.snowball.totalInterest)}</p>
+                                            <p className="text-[10px] uppercase font-bold text-amber-600/60 mb-0.5">หมดหนี้ในเดือน</p>
+                                            <p className="font-black text-sm text-amber-900">{getAbsoluteDate(results.snowball.months)}</p>
+                                            <p className="text-[10px] font-semibold text-amber-700/70 mb-2">({formatMonthsDuration(results.snowball.months)})</p>
+                                            <p className="text-[10px] text-amber-700 font-bold bg-amber-100/50 inline-block px-2 py-1 rounded-md">เสียดอกเบี้ย: {formatMoney(results.snowball.totalInterest)}</p>
+                                            
+                                            {/* ลำดับเป้าหมาย */}
+                                            {debts.length > 1 && (
+                                                <div className="mt-3 pt-3 border-t border-amber-200/60">
+                                                    <p className="text-[9px] font-bold text-amber-700/80 mb-1.5 flex items-center gap-1">🎯 ลำดับการโปะ:</p>
+                                                    <div className="flex flex-col gap-1">
+                                                        {payoffOrders.snowball.map((name, idx) => (
+                                                            <div key={idx} className="flex items-center text-[10px] font-bold text-amber-900 bg-amber-200/40 px-1.5 py-1 rounded border border-amber-200/50">
+                                                                <span className="bg-amber-500 text-white w-3.5 h-3.5 rounded-full flex items-center justify-center mr-1.5 text-[8px] shrink-0">{idx + 1}</span>
+                                                                <span className="truncate">{name}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
                                     {/* Avalanche */}
-                                    <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-400 relative overflow-hidden shadow-md">
-                                        <div className="absolute top-0 right-0 bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg">ประหยัดสุด 🏆</div>
+                                    <div className="p-4 rounded-2xl bg-emerald-50 border-[1.5px] border-emerald-400 relative overflow-hidden shadow-md flex flex-col justify-between">
+                                        <div className="absolute top-0 right-0 bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg shadow-sm">ประหยัดสุด 🏆</div>
                                         <div>
-                                            <h3 className="font-bold text-emerald-800 mb-1 text-sm">🏔️ Avalanche</h3>
-                                            <p className="text-[11px] text-emerald-600 mb-3">โปะดอกแพงสุดก่อน</p>
+                                            <h3 className="font-bold text-emerald-800 mb-1 text-sm mt-2">🏔️ Avalanche</h3>
+                                            <p className="text-[10px] text-emerald-600/80 mb-3 font-medium">ตัดดอกเบี้ยแพงสุดก่อน</p>
                                         </div>
                                         <div>
-                                            <p className="text-[10px] uppercase font-bold text-emerald-600/70">หมดหนี้ใน</p>
-                                            <p className="font-black text-sm text-emerald-800">{getAbsoluteDate(results.avalanche.months)}</p>
-                                            <p className="text-[10px] text-emerald-600 font-bold mt-1">ดอกเบี้ย: {formatMoney(results.avalanche.totalInterest)}</p>
+                                            <p className="text-[10px] uppercase font-bold text-emerald-600/60 mb-0.5">หมดหนี้ในเดือน</p>
+                                            <p className="font-black text-sm text-emerald-900">{getAbsoluteDate(results.avalanche.months)}</p>
+                                            <p className="text-[10px] font-semibold text-emerald-700/70 mb-2">({formatMonthsDuration(results.avalanche.months)})</p>
+                                            <p className="text-[10px] text-emerald-700 font-bold bg-emerald-100/50 inline-block px-2 py-1 rounded-md">เสียดอกเบี้ย: {formatMoney(results.avalanche.totalInterest)}</p>
+                                            
+                                            {/* ลำดับเป้าหมาย */}
+                                            {debts.length > 1 && (
+                                                <div className="mt-3 pt-3 border-t border-emerald-200/60">
+                                                    <p className="text-[9px] font-bold text-emerald-700/80 mb-1.5 flex items-center gap-1">🎯 ลำดับการโปะ:</p>
+                                                    <div className="flex flex-col gap-1">
+                                                        {payoffOrders.avalanche.map((name, idx) => (
+                                                            <div key={idx} className="flex items-center text-[10px] font-bold text-emerald-900 bg-emerald-200/40 px-1.5 py-1 rounded border border-emerald-200/50">
+                                                                <span className="bg-emerald-500 text-white w-3.5 h-3.5 rounded-full flex items-center justify-center mr-1.5 text-[8px] shrink-0">{idx + 1}</span>
+                                                                <span className="truncate">{name}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -387,23 +465,26 @@
 
                                 {/* Graph Visualization */}
                                 {!results.minimum.isInfinite && chartData.length > 0 && (
-                                    <div className="pt-4 border-t border-slate-100">
-                                        <h3 className="text-sm font-bold text-slate-700 mb-4">📈 กราฟจำลองยอดหนี้คงเหลือเทียบ 3 กลยุทธ์</h3>
-                                        <div className="h-64 w-full">
+                                    <div className="pt-5 border-t border-slate-100 mt-2">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5"><span className="text-lg">📉</span> กราฟยอดหนี้คงเหลือ 3 กลยุทธ์</h3>
+                                        </div>
+                                        {/* ครอบกราฟด้วย onPointerDown เพื่อให้แตะพื้นที่ว่างแล้วเคลียร์สถานะซ่อน Tooltip */}
+                                        <div className="h-72 w-full -ml-4" onPointerDown={() => setIsTooltipHidden(false)}>
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                                                <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                                    <XAxis dataKey="month" tick={{fontSize: 10, fill: '#94a3b8'}} axisLine={false} tickLine={false} tickFormatter={(m) => `เดือนที่ ${m}`}/>
+                                                    <XAxis dataKey="month" tick={{fontSize: 10, fill: '#94a3b8'}} axisLine={false} tickLine={false} tickFormatter={(m) => `ด.${m}`}/>
                                                     <YAxis tick={{fontSize: 10, fill: '#94a3b8'}} axisLine={false} tickLine={false} tickFormatter={(val) => `฿${(val/1000)}k`} />
                                                     <Tooltip 
-                                                        formatter={(value) => formatMoney(value)}
-                                                        labelFormatter={(label) => `เดือนที่ ${label}`}
-                                                        contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
+                                                        content={<CustomTooltip isHidden={isTooltipHidden} setIsHidden={setIsTooltipHidden} />}
+                                                        wrapperStyle={{ pointerEvents: 'auto' }} /* หัวใจสำคัญ: ทำให้ปุ่มใน Tooltip กดได้ */
+                                                        isAnimationActive={false} /* ปิด Animation ลดอาการหน่วงบนมือถือ */
                                                     />
-                                                    <Legend wrapperStyle={{fontSize: 11, paddingTop: '10px'}} />
+                                                    <Legend wrapperStyle={{fontSize: 11, paddingTop: '15px'}} iconType="circle" />
                                                     <Line type="monotone" name="จ่ายขั้นต่ำ" dataKey="จ่ายขั้นต่ำ" stroke="#f43f5e" strokeWidth={2} dot={false} strokeDasharray="4 4" />
-                                                    <Line type="monotone" name="Snowball" dataKey="Snowball (ก้อนเล็ก)" stroke="#f59e0b" strokeWidth={2.5} dot={false} />
-                                                    <Line type="monotone" name="Avalanche" dataKey="Avalanche (ดอกแพง)" stroke="#10b981" strokeWidth={3} dot={false} />
+                                                    <Line type="monotone" name="Snowball" dataKey="Snowball" stroke="#f59e0b" strokeWidth={2.5} dot={false} />
+                                                    <Line type="monotone" name="Avalanche" dataKey="Avalanche" stroke="#10b981" strokeWidth={3} dot={false} />
                                                     <ReferenceLine y={0} stroke="#94a3b8" />
                                                 </LineChart>
                                             </ResponsiveContainer>
@@ -413,9 +494,9 @@
                             </div>
                         ) : (
                             <div className="bg-slate-50 p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center">
-                                <div className="text-5xl mb-4">🧾</div>
-                                <h3 className="text-lg font-bold text-slate-700 mb-2">ยังไม่มีข้อมูลหนี้</h3>
-                                <p className="text-sm text-slate-500">กรอกรายการหนี้ทางฝั่งซ้ายเพื่อดูเปรียบเทียบกลยุทธ์ Snowball และ Avalanche ได้เลยครับ</p>
+                                <div className="text-5xl mb-4 opacity-50">🧾</div>
+                                <h3 className="text-lg font-bold text-slate-600 mb-2">ยังไม่มีข้อมูลหนี้</h3>
+                                <p className="text-sm text-slate-500 font-medium max-w-sm mx-auto">กรอกรายการหนี้ทางฝั่งซ้าย เพื่อให้ระบบวิเคราะห์ และสร้างแผนการปลดหนี้ที่ดีที่สุดให้คุณครับ</p>
                             </div>
                         )}
                     </div>
